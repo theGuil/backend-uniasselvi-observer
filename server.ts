@@ -5,10 +5,6 @@ interface DadosCliente {
     id_sala: string;
 }
 
-interface WebSocketComDados extends WebSocket {
-    data: DadosCliente;
-}
-
 interface MensagemSinalizacao {
     tipo: string;
     de?: string;
@@ -26,55 +22,181 @@ interface GerenciadorSalas {
     sala_existe(id_sala: string): boolean;
 }
 
-interface GerenciadorConexoes {
-    adicionar_conexao(id_cliente: string, ws: WebSocketComDados): void;
-    remover_conexao(id_cliente: string): void;
-    obter_conexao(id_cliente: string): WebSocketComDados | undefined;
-    conexao_existe(id_cliente: string): boolean;
-}
-
-class ServidorSinalizacao implements GerenciadorSalas, GerenciadorConexoes {
+class ServidorSinalizacao implements GerenciadorSalas {
     private salas: Map<string, Set<string>>;
-    private conexoes: Map<string, WebSocketComDados>;
-    private readonly ABERTO: number;
+    private mensagensPendentes: Map<string, MensagemSinalizacao[]>;
+    private ultimoAcesso: Map<string, number>;
+    private readonly TEMPO_LIMITE_INATIVIDADE: number = 30000; // 30 segundos
 
     constructor() {
         this.salas = new Map<string, Set<string>>();
-        this.conexoes = new Map<string, WebSocketComDados>();
-        this.ABERTO = WebSocket.OPEN;
+        this.mensagensPendentes = new Map<string, MensagemSinalizacao[]>();
+        this.ultimoAcesso = new Map<string, number>();
+
+        setInterval(this.verificarClientesInativos.bind(this), 10000);
     }
 
-    public iniciar_servidor(porta: number = 3000): void {
+    public iniciar_servidor(porta: number = 3005): void {
         serve({
             port: porta,
             fetch: this.processar_requisicao.bind(this),
         });
 
-        console.log(`Servidor de sinalização iniciado na porta ${porta}`);
+        console.log(`Servidor de sinalização WebRTC iniciado na porta ${porta}`);
     }
 
-    private processar_requisicao(req: Request, servidor: any): Response {
-        if (req.headers.get("upgrade") === "websocket") {
-            const url = new URL(req.url);
-            const id_sala = url.searchParams.get("roomId") || "padrao";
+    private async processar_requisicao(req: Request): Promise<Response> {
+        const url = new URL(req.url);
+        const caminho = url.pathname;
 
-            const upgrade = servidor.upgrade(req, {
-                data: {id_sala, id: crypto.randomUUID()},
+        const corsHeaders = {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Accept",
+        };
+
+        if (req.method === "OPTIONS") {
+            return new Response(null, {
+                status: 204,
+                headers: corsHeaders,
             });
+        }
+        console.log("chegou uma nova requisição", new Date().getMilliseconds());
 
-            const ws = upgrade[0] as WebSocketComDados;
-            const resposta = upgrade[1];
-
-            if (!ws) {
-                return new Response("Falha no upgrade para WebSocket", {status: 500});
+        try {
+            if (req.method === "GET") {
+                if (caminho === "/mensagens") {
+                    return await this.obterMensagensPendentes(req, corsHeaders);
+                } else if (caminho === "/usuarios") {
+                    return await this.obterUsuariosNaSala(req, corsHeaders);
+                }
+            } else if (req.method === "POST") {
+                if (caminho === "/registrar") {
+                    return await this.registrarCliente(req, corsHeaders);
+                } else if (caminho === "/enviar") {
+                    return await this.receberMensagem(req, corsHeaders);
+                } else if (caminho === "/desconectar") {
+                    return await this.desconectarCliente(req, corsHeaders);
+                }
             }
 
-            this.configurar_websocket_para_novo_cliente(ws);
-            return resposta;
+            return new Response("Servidor de sinalização WebRTC", {
+                headers: {...corsHeaders, "Content-Type": "text/plain"},
+            });
+        } catch (erro) {
+            console.error("Erro ao processar requisição:", erro);
+            return new Response(JSON.stringify({erro: "Erro interno do servidor"}), {
+                status: 500,
+                headers: {...corsHeaders, "Content-Type": "application/json"},
+            });
+        }
+    }
+
+    private async registrarCliente(req: Request, corsHeaders: any): Promise<Response> {
+        const dados = await req.json();
+        const id_sala = dados.id_sala || "padrao";
+        const id_cliente = crypto.randomUUID();
+
+        this.adicionar_cliente_na_sala(id_sala, id_cliente);
+        this.mensagensPendentes.set(id_cliente, []);
+        this.atualizarUltimoAcesso(id_cliente);
+
+        console.log(`Cliente ${id_cliente} registrado na sala ${id_sala}`);
+
+        this.notificarSalaSobreNovoCliente(id_sala, id_cliente);
+
+        return new Response(
+            JSON.stringify({
+                id_cliente,
+                id_sala,
+                mensagem: "Registrado com sucesso",
+            }),
+            {
+                headers: {...corsHeaders, "Content-Type": "application/json"},
+            }
+        );
+    }
+
+    private async obterMensagensPendentes(req: Request, corsHeaders: any): Promise<Response> {
+        const url = new URL(req.url);
+        const id_cliente = url.searchParams.get("id_cliente");
+
+        if (!id_cliente) {
+            return new Response(JSON.stringify({erro: "ID de cliente não fornecido"}), {
+                status: 400,
+                headers: {...corsHeaders, "Content-Type": "application/json"},
+            });
         }
 
-        return new Response("Servidor de sinalização WebRTC em execução!", {
-            headers: {"Content-Type": "text/plain"},
+        this.atualizarUltimoAcesso(id_cliente);
+
+        const mensagens = this.mensagensPendentes.get(id_cliente) || [];
+        this.mensagensPendentes.set(id_cliente, []);
+
+        return new Response(JSON.stringify({mensagens}), {
+            headers: {...corsHeaders, "Content-Type": "application/json"},
+        });
+    }
+
+    private async obterUsuariosNaSala(req: Request, corsHeaders: any): Promise<Response> {
+        const url = new URL(req.url);
+        const id_sala = url.searchParams.get("id_sala");
+
+        if (!id_sala) {
+            return new Response(JSON.stringify({erro: "ID de sala não fornecido"}), {
+                status: 400,
+                headers: {...corsHeaders, "Content-Type": "application/json"},
+            });
+        }
+
+        const usuarios = Array.from(this.obter_clientes_na_sala(id_sala));
+
+        return new Response(JSON.stringify({usuarios}), {
+            headers: {...corsHeaders, "Content-Type": "application/json"},
+        });
+    }
+
+    private async receberMensagem(req: Request, corsHeaders: any): Promise<Response> {
+        const dados = await req.json();
+        const id_cliente = dados.id_cliente;
+        const mensagens = dados.mensagens || [];
+
+        if (!id_cliente) {
+            return new Response(JSON.stringify({erro: "ID de cliente não fornecido"}), {
+                status: 400,
+                headers: {...corsHeaders, "Content-Type": "application/json"},
+            });
+        }
+
+        this.atualizarUltimoAcesso(id_cliente);
+
+        for (const mensagem of mensagens) {
+            if (mensagem.para) {
+                this.encaminharMensagemParaCliente(mensagem.para, mensagem);
+            }
+        }
+
+        return new Response(JSON.stringify({sucesso: true}), {
+            headers: {...corsHeaders, "Content-Type": "application/json"},
+        });
+    }
+
+    private async desconectarCliente(req: Request, corsHeaders: any): Promise<Response> {
+        const dados = await req.json();
+        const id_cliente = dados.id_cliente;
+        const id_sala = dados.id_sala;
+
+        if (!id_cliente || !id_sala) {
+            return new Response(JSON.stringify({erro: "Parâmetros incompletos"}), {
+                status: 400,
+                headers: {...corsHeaders, "Content-Type": "application/json"},
+            });
+        }
+
+        this.removerCliente(id_sala, id_cliente);
+
+        return new Response(JSON.stringify({sucesso: true}), {
+            headers: {...corsHeaders, "Content-Type": "application/json"},
         });
     }
 
@@ -110,110 +232,69 @@ class ServidorSinalizacao implements GerenciadorSalas, GerenciadorConexoes {
         return this.salas.has(id_sala);
     }
 
-    public adicionar_conexao(id_cliente: string, ws: WebSocketComDados): void {
-        this.conexoes.set(id_cliente, ws);
+    private encaminharMensagemParaCliente(id_destino: string, mensagem: MensagemSinalizacao): void {
+        if (!this.mensagensPendentes.has(id_destino)) {
+            this.mensagensPendentes.set(id_destino, []);
+        }
+
+        this.mensagensPendentes.get(id_destino)?.push(mensagem);
     }
 
-    public remover_conexao(id_cliente: string): void {
-        this.conexoes.delete(id_cliente);
-    }
+    private notificarSalaSobreNovoCliente(id_sala: string, id_novo_cliente: string): void {
+        const clientes = this.obter_clientes_na_sala(id_sala);
 
-    public obter_conexao(id_cliente: string): WebSocketComDados | undefined {
-        return this.conexoes.get(id_cliente);
-    }
+        for (const id_cliente of clientes) {
+            if (id_cliente !== id_novo_cliente) {
+                this.encaminharMensagemParaCliente(id_cliente, {
+                    tipo: "novo-usuario",
+                    id_peer: id_novo_cliente,
+                });
 
-    public conexao_existe(id_cliente: string): boolean {
-        return this.conexoes.has(id_cliente);
-    }
-
-    private configurar_websocket_para_novo_cliente(ws: WebSocketComDados): void {
-        const id_cliente = ws.data.id;
-        const id_sala = ws.data.id_sala;
-
-        this.adicionar_conexao(id_cliente, ws);
-        this.adicionar_cliente_na_sala(id_sala, id_cliente);
-
-        console.log(`Cliente ${id_cliente} conectado à sala ${id_sala}`);
-
-        this.enviar_mensagem_para_cliente(ws, {
-            tipo: "conexao-estabelecida",
-            id_cliente,
-            id_sala,
-        });
-
-        const clientes_na_sala = this.obter_clientes_na_sala(id_sala);
-        clientes_na_sala.forEach((id_peer) => {
-            if (id_peer !== id_cliente) {
-                this.enviar_mensagem_para_cliente(ws, {
+                this.encaminharMensagemParaCliente(id_novo_cliente, {
                     tipo: "usuario-existente",
-                    id_peer,
+                    id_peer: id_cliente,
                 });
-
-                const ws_peer = this.obter_conexao(id_peer);
-                if (ws_peer && ws_peer.readyState === this.ABERTO) {
-                    this.enviar_mensagem_para_cliente(ws_peer, {
-                        tipo: "novo-usuario",
-                        id_peer: id_cliente,
-                    });
-                }
             }
-        });
-
-        this.configurar_manipulador_de_mensagens_recebidas(ws, id_cliente);
-        this.configurar_manipulador_para_desconexao_de_cliente(ws, id_cliente, id_sala);
+        }
     }
 
-    private configurar_manipulador_de_mensagens_recebidas(ws: WebSocketComDados, id_cliente: string): void {
-        ws.onmessage = (evento: MessageEvent) => {
-            try {
-                const mensagem = JSON.parse(evento.data as string) as MensagemSinalizacao;
+    private removerCliente(id_sala: string, id_cliente: string): void {
+        const sala_removida = this.remover_cliente_da_sala(id_sala, id_cliente);
 
-                if (mensagem.para && this.conexao_existe(mensagem.para)) {
-                    const ws_destino = this.obter_conexao(mensagem.para);
-                    if (ws_destino && ws_destino.readyState === this.ABERTO) {
-                        mensagem.de = id_cliente;
-                        this.enviar_mensagem_para_cliente(ws_destino, mensagem);
-                    }
-                }
-            } catch (erro) {
-                console.error("Erro ao processar mensagem recebida:", erro);
-            }
-        };
-    }
+        this.mensagensPendentes.delete(id_cliente);
+        this.ultimoAcesso.delete(id_cliente);
 
-    private configurar_manipulador_para_desconexao_de_cliente(ws: WebSocketComDados, id_cliente: string, id_sala: string): void {
-        ws.onclose = () => {
-            console.log(`Cliente ${id_cliente} desconectado da sala ${id_sala}`);
+        if (!sala_removida && this.sala_existe(id_sala)) {
+            const clientes = this.obter_clientes_na_sala(id_sala);
 
-            const sala_foi_removida = this.remover_cliente_da_sala(id_sala, id_cliente);
-
-            if (sala_foi_removida) {
-                console.log(`Sala ${id_sala} removida por estar vazia`);
-            } else if (this.sala_existe(id_sala)) {
-                this.notificar_sala_sobre_desconexao_de_cliente(id_sala, id_cliente);
-            }
-
-            this.remover_conexao(id_cliente);
-        };
-    }
-
-    private notificar_sala_sobre_desconexao_de_cliente(id_sala: string, id_cliente_desconectado: string): void {
-        const sala = this.obter_clientes_na_sala(id_sala);
-        sala.forEach((id_peer) => {
-            const ws_peer = this.obter_conexao(id_peer);
-            if (ws_peer && ws_peer.readyState === this.ABERTO) {
-                this.enviar_mensagem_para_cliente(ws_peer, {
+            for (const id_outro_cliente of clientes) {
+                this.encaminharMensagemParaCliente(id_outro_cliente, {
                     tipo: "usuario-desconectado",
-                    id_peer: id_cliente_desconectado,
+                    id_peer: id_cliente,
                 });
             }
-        });
+        }
+
+        console.log(`Cliente ${id_cliente} removido da sala ${id_sala}`);
     }
 
-    private enviar_mensagem_para_cliente(ws: WebSocketComDados, mensagem: MensagemSinalizacao): void {
-        ws.send(JSON.stringify(mensagem));
+    private atualizarUltimoAcesso(id_cliente: string): void {
+        this.ultimoAcesso.set(id_cliente, Date.now());
+    }
+
+    private verificarClientesInativos(): void {
+        // const agora = Date.now();
+        // for (const [id_sala, clientes] of this.salas.entries()) {
+        //     for (const id_cliente of clientes) {
+        //         const ultimoAcesso = this.ultimoAcesso.get(id_cliente) || 0;
+        //         if (agora - ultimoAcesso > this.TEMPO_LIMITE_INATIVIDADE) {
+        //             console.log(`Cliente ${id_cliente} inativo por mais de ${this.TEMPO_LIMITE_INATIVIDADE}ms. Removendo...`);
+        //             this.removerCliente(id_sala, id_cliente);
+        //         }
+        //     }
+        // }
     }
 }
 
 const servidor = new ServidorSinalizacao();
-servidor.iniciar_servidor(3000);
+servidor.iniciar_servidor(3005);

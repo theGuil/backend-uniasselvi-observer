@@ -1,10 +1,10 @@
 {
     "name": "backend-uniasselvi-observer",
-    "module": "server.ts",
+    "module": "server.js",
     "type": "module",
     "scripts": {
-        "dev": "bun run --watch server.ts",
-        "server": "bun run server.ts"
+        "dev": "bun run --watch server.js",
+        "server": "bun run server.js"
     },
     "devDependencies": {
         "@types/bun": "latest"
@@ -12,5 +12,5 @@
     "peerDependencies": {
         "typescript": "^5.0.0"
     },
-    "version": "0.0.2"
+    "version": "0.0.3"
 }
