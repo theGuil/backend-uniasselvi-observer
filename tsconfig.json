@@ -1,0 +1,62 @@
+{
+    "compilerOptions": {
+        // Enable latest features
+        "lib": ["ESNext", "DOM"],
+        "target": "ESNext",
+        "module": "ESNext",
+        "moduleDetection": "force",
+        "jsx": "react-jsx",
+        "allowJs": true,
+
+        // Bundler mode
+        "moduleResolution": "bundler",
+        "allowImportingTsExtensions": true,
+        "verbatimModuleSyntax": true,
+        "noEmit": true,
+
+        // Best practices
+        "strict": true,
+        "skipLibCheck": true,
+        "noFallthroughCasesInSwitch": true,
+
+        // Some stricter flags (disabled by default)
+        "noUnusedLocals": false,
+        "noUnusedParameters": false,
+        "noPropertyAccessFromIndexSignature": false
+    }
+}
+
+// {
+//     "compilerOptions": {
+//         // Configurações básicas
+//         "lib": ["ESNext", "DOM"],
+//         "target": "ESNext",
+//         "module": "ESNext",
+//         "moduleDetection": "force",
+//         "jsx": "react-jsx",
+//         "allowJs": true,
+
+//         // Bundler mode
+//         "moduleResolution": "bundler",
+//         "allowImportingTsExtensions": true,
+//         "verbatimModuleSyntax": true,
+//         "noEmit": true,
+
+//         // Desativa verificações de tipo e regras estritas
+//         "strict": false, // Desativa todas as regras estritas
+//         "skipLibCheck": true, // Ignora a verificação de tipos das bibliotecas
+//         "noFallthroughCasesInSwitch": false, // Desativa verificação de fallthrough em switch
+
+//         // Desativa verificações adicionais
+//         "noUnusedLocals": false, // Permite variáveis locais não utilizadas
+//         "noUnusedParameters": false, // Permite parâmetros não utilizados
+//         "noPropertyAccessFromIndexSignature": false, // Permite acesso a propriedades sem verificação de tipo
+//         "noImplicitAny": false, // Permite tipos implícitos 'any'
+//         "noImplicitReturns": false, // Permite retornos implícitos
+//         "noImplicitThis": false, // Permite uso implícito de 'this'
+//         "strictNullChecks": false, // Desativa verificações de null/undefined
+//         "strictFunctionTypes": false, // Desativa verificações estritas de tipos de funções
+//         "strictBindCallApply": false, // Desativa verificações estritas de bind/call/apply
+//         "strictPropertyInitialization": false // Desativa verificações de inicialização de propriedades
+//     }
+// }
