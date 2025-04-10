@@ -4,7 +4,8 @@
     "type": "module",
     "scripts": {
         "dev": "bun run --watch server.js",
-        "server": "bun run server.js"
+        "server": "bun run server.js",
+        "producao": "bun run server.js"
     },
     "devDependencies": {
         "@types/bun": "latest"
@@ -12,5 +13,5 @@
     "peerDependencies": {
         "typescript": "^5.0.0"
     },
-    "version": "0.0.4"
+    "version": "0.0.5"
 }
