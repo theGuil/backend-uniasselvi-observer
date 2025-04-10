@@ -36,7 +36,7 @@ class ServidorSinalizacao implements GerenciadorSalas {
         setInterval(this.verificarClientesInativos.bind(this), 10000);
     }
 
-    public iniciar_servidor(porta: number = 3005): void {
+    public iniciar_servidor(porta: number = 50010): void {
         serve({
             port: porta,
             fetch: this.processar_requisicao.bind(this),
@@ -297,4 +297,4 @@ class ServidorSinalizacao implements GerenciadorSalas {
 }
 
 const servidor = new ServidorSinalizacao();
-servidor.iniciar_servidor(3005);
+servidor.iniciar_servidor(50010);
