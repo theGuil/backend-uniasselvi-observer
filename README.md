@@ -36,3 +36,7 @@ git init
 git add .
 git commit -m "✨ feat: muda a porta"
 git push -u origin producao
+
+# VPS:
+
+pm2 start ecosystem.config.cjs --only producao-backend-uniasselvi-observer
