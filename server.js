@@ -3,94 +3,48 @@ class ServidorWebSocket {
         this.clientes = new Map();
         this.salas = new Map();
 
-        console.log(`Iniciando servidor WebSocket na porta ${porta}`);
-
         this.server = Bun.serve({
             port: porta,
 
             websocket: {
-                // Chamado quando uma conexão WebSocket é estabelecida
-                open: (ws) => {
-                    console.log("Nova conexão WebSocket estabelecida");
-                    this.handleConnection(ws);
-                },
-
-                // Chamado quando uma mensagem é recebida
-                message: (ws, message) => {
-                    try {
-                        console.log("Mensagem recebida:", message);
-                        this.handleMessage(ws, message);
-                    } catch (error) {
-                        console.error("Erro ao processar mensagem:", error);
-                    }
-                },
-
-                // Chamado quando a conexão é fechada
-                close: (ws) => {
-                    console.log("WebSocket desconectado");
-                    this.handleDisconnect(ws);
-                },
-
-                // Opções de compressão e publicação
+                message: (ws, message) => this.handle_message(ws, message),
+                close: (ws) => this.handle_disconnect(ws),
                 perMessageDeflate: false,
                 publishToSelf: false,
             },
 
-            // Tratamento de requisições HTTP
             fetch: (req, server) => {
-                // Tentar fazer upgrade da conexão para WebSocket
-                if (server.upgrade(req)) {
-                    return; // Conexão feita com sucesso
-                }
+                if (server.upgrade(req)) return;
             },
         });
 
-        console.log(`Servidor iniciado na porta ${porta}`);
-
-        // Verificar clientes inativos a cada 30 segundos
-        setInterval(this.verificarClientesInativos.bind(this), 30000);
+        setInterval(this.verificar_clientes_inativos.bind(this), 30000);
     }
 
-    handleConnection(ws) {
-        // A identificação será feita através da primeira mensagem
-        console.log("Cliente conectado, aguardando mensagem de registro");
-    }
-
-    handleMessage(ws, message) {
-        console.log("Mensagem enviada", message);
-
+    handle_message(ws, message) {
         try {
             const dados = JSON.parse(message);
             const {tipo} = dados;
-            console.log(dados, " dados dados");
 
             switch (tipo) {
                 case "registrar":
-                    this.registrarCliente(ws, dados);
+                    this.registrar_cliente(ws, dados);
                     break;
-
                 case "mensagem":
-                    this.processarMensagem(dados);
+                    this.processar_mensagem(dados);
                     break;
-
                 case "movimento":
-                    this.processarMovimento(dados);
+                    this.processar_movimento(dados);
                     break;
-
                 case "ping":
-                    this.atualizarAtividade(dados.clienteId);
+                    this.atualizar_atividade(dados.clienteId);
                     break;
-
                 default:
-                    console.warn("Tipo de mensagem desconhecido:", tipo);
             }
-        } catch (error) {
-            console.error("Erro ao processar mensagem:", error);
-        }
+        } catch (error) {}
     }
 
-    handleDisconnect(ws) {
-        // Encontrar cliente pelo socket
+    handle_disconnect(ws) {
         let clienteId = null;
 
         for (const [id, cliente] of this.clientes.entries()) {
@@ -100,109 +54,46 @@ class ServidorWebSocket {
             }
         }
 
-        if (clienteId) {
-            this.removerCliente(clienteId);
-        }
+        if (clienteId) this.remover_cliente(clienteId);
     }
 
-    registrarCliente(ws, dados) {
+    registrar_cliente(ws, dados) {
         const {nome, sala, cor} = dados;
-        console.log(nome, sala, cor, "nome, sala, cor");
 
         if (!nome || !sala) {
-            ws.send(
-                JSON.stringify({
-                    tipo: "erro",
-                    mensagem: "Nome e sala são obrigatórios",
-                })
-            );
+            ws.send(JSON.stringify({tipo: "erro", mensagem: "Nome e sala são obrigatórios"}));
             return;
         }
 
         const clienteId = crypto.randomUUID();
 
-        // Posição aleatória inicial
-        const posicao = {
-            x: 100 + Math.random() * 500,
-            y: 100 + Math.random() * 300,
-        };
+        const posicao = {x: 100 + Math.random() * 500, y: 100 + Math.random() * 300};
 
-        // Criar cliente
-        const cliente = {
-            id: clienteId,
-            ws,
-            sala,
-            nome,
-            cor: cor || "#3B82F6",
-            posicao,
-            ultimoAcesso: Date.now(),
-        };
+        const cliente = {id: clienteId, ws, sala, nome, cor: cor || "#3B82F6", posicao, ultimoAcesso: Date.now()};
 
-        // Adicionar à coleção de clientes
         this.clientes.set(clienteId, cliente);
 
-        // Adicionar à sala
-        if (!this.salas.has(sala)) {
-            this.salas.set(sala, new Set());
-        }
+        if (!this.salas.has(sala)) this.salas.set(sala, new Set());
+
         this.salas.get(sala).add(clienteId);
 
-        // Enviar resposta com ID
-        ws.send(
-            JSON.stringify({
-                tipo: "registrado",
-                clienteId,
-                posicao,
-            })
-        );
+        ws.send(JSON.stringify({tipo: "registrado", clienteId, posicao}));
 
-        // Enviar lista de jogadores existentes na sala para o novo cliente
         const jogadoresExistentes = Array.from(this.salas.get(sala) || [])
             .filter((id) => id !== clienteId)
             .map((id) => {
                 const c = this.clientes.get(id);
-                return {
-                    id,
-                    nome: c?.nome,
-                    cor: c?.cor,
-                    posicao: c?.posicao,
-                };
+                return {id, nome: c?.nome, cor: c?.cor, posicao: c?.posicao};
             });
 
-        ws.send(
-            JSON.stringify({
-                tipo: "jogadores_existentes",
-                jogadores: jogadoresExistentes,
-            })
-        );
+        ws.send(JSON.stringify({tipo: "jogadores_existentes", jogadores: jogadoresExistentes}));
 
-        // Notificar outros na sala sobre o novo jogador
-        this.enviarParaSala(
-            sala,
-            {
-                tipo: "novo_jogador",
-                jogador: {
-                    id: clienteId,
-                    nome,
-                    cor: cor || "#3B82F6",
-                    posicao,
-                },
-            },
-            clienteId
-        ); // Excluir o próprio cliente
+        this.enviar_para_sala(sala, {tipo: "novo_jogador", jogador: {id: clienteId, nome, cor: cor || "#3B82F6", posicao}}, clienteId);
 
-        // Enviar mensagem de boas-vindas para a sala
-        this.enviarParaSala(sala, {
-            tipo: "mensagem",
-            sender: "Sistema",
-            texto: `${nome} entrou na sala`,
-            hora: new Date().toLocaleTimeString(),
-        });
-
-        console.log(`Cliente ${clienteId} (${nome}) registrado na sala ${sala}`);
+        this.enviar_para_sala(sala, {tipo: "mensagem", sender: "Sistema", texto: `${nome} entrou na sala`, hora: new Date().toLocaleTimeString()});
     }
 
-    processarMensagem(dados) {
+    processar_mensagem(dados) {
         const {clienteId, texto} = dados;
 
         if (!clienteId || !texto) return;
@@ -210,26 +101,14 @@ class ServidorWebSocket {
         const cliente = this.clientes.get(clienteId);
         if (!cliente) return;
 
-        // Atualizar horário de atividade
-        this.atualizarAtividade(clienteId);
+        this.atualizar_atividade(clienteId);
 
-        // Enviar mensagem para todos na sala
-        this.enviarParaSala(cliente.sala, {
-            tipo: "mensagem",
-            sender: cliente.nome,
-            texto,
-            hora: new Date().toLocaleTimeString(),
-        });
+        this.enviar_para_sala(cliente.sala, {tipo: "mensagem", sender: cliente.nome, texto, hora: new Date().toLocaleTimeString()});
 
-        // Adicionar balão de fala ao jogador
-        this.enviarParaSala(cliente.sala, {
-            tipo: "balao_fala",
-            jogadorId: clienteId,
-            texto,
-        });
+        this.enviar_para_sala(cliente.sala, {tipo: "balao_fala", jogadorId: clienteId, texto});
     }
 
-    processarMovimento(dados) {
+    processar_movimento(dados) {
         const {clienteId, posicao} = dados;
 
         if (!clienteId || !posicao) return;
@@ -237,23 +116,13 @@ class ServidorWebSocket {
         const cliente = this.clientes.get(clienteId);
         if (!cliente) return;
 
-        // Atualizar posição do cliente
         cliente.posicao = posicao;
-        this.atualizarAtividade(clienteId);
+        this.atualizar_atividade(clienteId);
 
-        // Enviar atualização para todos na sala
-        this.enviarParaSala(
-            cliente.sala,
-            {
-                tipo: "movimento",
-                jogadorId: clienteId,
-                posicao,
-            },
-            clienteId
-        ); // Não precisa mandar de volta para quem se moveu
+        this.enviar_para_sala(cliente.sala, {tipo: "movimento", jogadorId: clienteId, posicao}, clienteId);
     }
 
-    enviarParaSala(sala, mensagem, excluirClienteId) {
+    enviar_para_sala(sala, mensagem, excluirClienteId) {
         const clientesDaSala = this.salas.get(sala);
         if (!clientesDaSala) return;
 
@@ -263,62 +132,39 @@ class ServidorWebSocket {
             if (excluirClienteId && id === excluirClienteId) continue;
 
             const cliente = this.clientes.get(id);
-            if (cliente && cliente.ws.readyState === WebSocket.OPEN) {
-                cliente.ws.send(mensagemJSON);
-            }
+            if (cliente && cliente.ws.readyState === WebSocket.OPEN) cliente.ws.send(mensagemJSON);
         }
     }
 
-    removerCliente(clienteId) {
+    remover_cliente(clienteId) {
         const cliente = this.clientes.get(clienteId);
         if (!cliente) return;
 
-        // Remover da sala
         const sala = cliente.sala;
         this.salas.get(sala)?.delete(clienteId);
 
-        // Se a sala ficou vazia, removê-la
-        if (this.salas.get(sala)?.size === 0) {
-            this.salas.delete(sala);
-        }
+        if (this.salas.get(sala)?.size === 0) this.salas.delete(sala);
 
-        // Remover da lista de clientes
         this.clientes.delete(clienteId);
 
-        // Notificar outros na sala
-        this.enviarParaSala(sala, {
-            tipo: "jogador_desconectado",
-            jogadorId: clienteId,
-        });
+        this.enviar_para_sala(sala, {tipo: "jogador_desconectado", jogadorId: clienteId});
 
-        // Enviar mensagem de saída para o chat
-        this.enviarParaSala(sala, {
-            tipo: "mensagem",
-            sender: "Sistema",
-            texto: `${cliente.nome} saiu da sala`,
-            hora: new Date().toLocaleTimeString(),
-        });
-
-        console.log(`Cliente ${clienteId} (${cliente.nome}) removido da sala ${sala}`);
+        this.enviar_para_sala(sala, {tipo: "mensagem", sender: "Sistema", texto: `${cliente.nome} saiu da sala`, hora: new Date().toLocaleTimeString()});
     }
 
-    atualizarAtividade(clienteId) {
+    atualizar_atividade(clienteId) {
         const cliente = this.clientes.get(clienteId);
-        if (cliente) {
-            cliente.ultimoAcesso = Date.now();
-        }
+        if (cliente) cliente.ultimoAcesso = Date.now();
     }
 
-    verificarClientesInativos() {
+    verificar_clientes_inativos() {
         const agora = Date.now();
-        const timeout = 2 * 60 * 1000; // 2 minutos
+        const timeout = 2 * 60 * 1000;
 
         for (const [id, cliente] of this.clientes.entries()) {
             if (agora - cliente.ultimoAcesso > timeout) {
-                console.log(`Cliente ${id} inativo por mais de 2 minutos. Desconectando...`);
-                this.removerCliente(id);
+                this.remover_cliente(id);
 
-                // Fechar conexão WebSocket se ainda estiver aberta
                 if (cliente.ws.readyState === WebSocket.OPEN) {
                     cliente.ws.close();
                 }
@@ -327,6 +173,5 @@ class ServidorWebSocket {
     }
 }
 
-// Iniciar o servidor na porta padrão ou especificada
 const porta = process.env.PORT ? parseInt(process.env.PORT) : 50010;
 new ServidorWebSocket(porta);
